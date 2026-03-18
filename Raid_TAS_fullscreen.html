@@ -265,21 +265,20 @@ const EXTRA_CORRIDORS = 2;
 const PATH_INTERVAL = 0.35; // seconds between path recalculations
 
 // ── Enemy points ──────────────────────────────────────────────────
-const ENEMY_POINTS = { regular: 100, elite: 150, tank: 300, sniper: 250 };
+const ENEMY_POINTS = { regular: 100, elite: 150, tank: 300 };
 
 // ── Enemy rendering palettes ──────────────────────────────────────
 const ENEMY_PALETTE = {
   regular: { idle:'#7a2215', chase:'#cc1a00', nub:'#ff6040', glow:'#ff2000', range:'255,60,20'  },
   elite:   { idle:'#7a1560', chase:'#cc0099', nub:'#ff40cc', glow:'#ff00aa', range:'255,20,160' },
   tank:    { idle:'#1a3a1a', chase:'#1a6a1a', nub:'#40ff60', glow:'#00ff40', range:'40,200,80'  },
-  sniper:  { idle:'#1a2a4a', chase:'#1a4a8a', nub:'#4080ff', glow:'#0060ff', range:'40,100,255' },
 };
 
-// ── Squad distribution per level [regular, elite, tank, sniper] ──
+// ── Squad distribution per level [regular, elite, tank] ──
 const SQUAD_TABLE = {
-   1: [3, 0, 0, 0],  2: [4, 0, 0, 0],  3: [4, 1, 0, 0],  4: [3, 1, 1, 0],
-   5: [2, 1, 1, 1],  6: [3, 1, 1, 1],  7: [3, 2, 1, 1],  8: [3, 2, 2, 1],
-   9: [3, 2, 2, 2], 10: [4, 2, 2, 2],
+   1: [3, 0, 0],  2: [3, 1, 0],  3: [3, 1, 1],  4: [3, 2, 1],
+   5: [3, 2, 2],  6: [4, 2, 2],  7: [4, 3, 2],  8: [4, 3, 3],
+   9: [4, 3, 3], 10: [4, 3, 3],
 };
 
 // ── High score storage ────────────────────────────────────────────
@@ -311,7 +310,6 @@ function buildTileConstants() {
     pistol:  { range: TILE * 6.7,  fireRate: 0.85, spread: 0.07, pellets: 1, bulletSpeed: TILE * 12.5 },
     rifle:   { range: TILE * 7.9,  fireRate: 0.3,  spread: 0.05, pellets: 1, bulletSpeed: TILE * 13.3 },
     shotgun: { range: TILE * 3.3,  fireRate: 1.0,  spread: 0.12, pellets: 3, bulletSpeed: TILE * 12.5 },
-    sniper:  { range: TILE * 15.6, fireRate: 2.0,  spread: 0.03, pellets: 1, bulletSpeed: TILE * 12.5 },
   };
 }
 
@@ -355,10 +353,10 @@ function rescaleWorldOnResize(oldTile) {
 
   for (const e of (game.enemies || [])) {
     const arch = e.archetype;
-    e.radius      = arch === 'tank' ? TILE * 0.46 : (arch === 'elite' || arch === 'sniper') ? TILE * 0.29 : TILE * 0.33;
-    e.speed       = arch === 'elite' ? TILE * 2.2 : arch === 'sniper' ? TILE * 0.9 : TILE * 1.8;
+    e.radius      = arch === 'tank' ? TILE * 0.46 : arch === 'elite' ? TILE * 0.29 : TILE * 0.33;
+    e.speed       = arch === 'elite' ? TILE * 2.2 : TILE * 1.8;
     e.weaponRange = WEAPONS[e.weapon].range;
-    e.visionRange = arch === 'sniper' ? TILE * 20.8 : TILE * 5.8 + (game.level || 1) * TILE * 0.33;
+    e.visionRange = TILE * 5.8 + (game.level || 1) * TILE * 0.33;
     if (e.patrol)              e.patrol.forEach(rescale);
     if (e.pathGoal)            rescale(e.pathGoal);
     if (e.vantageX != null)    { e.vantageX *= scale; e.vantageY *= scale; }
@@ -812,15 +810,6 @@ function createEnemy(x, y, level, archetype) {
       radius:TILE*0.46, speed:TILE*1.8, health:baseHp8*3, points:ENEMY_POINTS.tank,
       weapon:'shotgun', weaponRange:WEAPONS.shotgun.range,
       shootRate:WEAPONS.shotgun.fireRate, shootCooldown:Math.random()*1.2 };
-    case 'sniper': return { ...base,
-      radius:TILE*0.29, speed:TILE*0.9, health:baseHp8, points:ENEMY_POINTS.sniper,
-      weapon:'sniper', weaponRange:WEAPONS.sniper.range,
-      visionRange:TILE*20.8, visionAngle:Math.PI*0.75,
-      shootRate:WEAPONS.sniper.fireRate, shootCooldown:2+Math.random()*2,
-      chargeTimer:0, chargeTime:1.5,
-      spawnX:base.x, spawnY:base.y,
-      guardAngle:Math.atan2((ROWS*TILE/2)-base.y, (COLS*TILE/2)-base.x),
-      blocked:false, vantageX:null, vantageY:null };
     default: return { ...base,
       radius:TILE*0.33, speed:TILE*1.8, health:baseHp4, points:ENEMY_POINTS.regular,
       weapon:'pistol', weaponRange:WEAPONS.pistol.range,
@@ -891,50 +880,6 @@ function hitPlayer() {
 // ┌─────────────────────────────────────────────────────────────────┐
 // │  SECTION 9 — AI BEHAVIORS                                       │
 // └─────────────────────────────────────────────────────────────────┘
-
-function behaviorSniper(e, p, dist, toPlayer, dt) {
-  const inAttackRange = dist <= e.weaponRange;
-  const inVision      = dist <= e.visionRange && Math.abs(normAngle(toPlayer-e.angle)) < e.visionAngle;
-  const hasSightline  = inAttackRange && !lineOfWall(e.x,e.y,p.x,p.y);
-  e.angle = inVision ? toPlayer : e.guardAngle;
-
-  if (hasSightline) {
-    e.blocked     = false;
-    e.chargeTimer = Math.min(e.chargeTime, e.chargeTimer+dt);
-    if (e.chargeTimer >= e.chargeTime && e.shootCooldown <= 0) {
-      e.chargeTimer = 0; e.shootCooldown = e.shootRate;
-      game.bullets.push(mkBullet(e.x,e.y, toPlayer+(Math.random()-0.5)*WEAPONS.sniper.spread, true,'sniper',e.weaponRange));
-      sfx.enemyShoot();
-    }
-  } else if (inAttackRange) {
-    // Blocked — seek a vantage point near spawn
-    e.chargeTimer = 0; e.blocked = true;
-    if (e.vantageX === null) {
-      let bestTile = null, bestScore = -Infinity;
-      for (let attempt = 0; attempt < 48; attempt++) {
-        const spread = (Math.random()-0.5)*Math.PI*2;
-        const testDist = (1+Math.random()*4)*TILE;
-        const tx = e.spawnX+Math.cos(spread)*testDist, ty = e.spawnY+Math.sin(spread)*testDist;
-        const tc = Math.floor(tx/TILE), tr = Math.floor(ty/TILE);
-        if (!game.map[tr]||game.map[tr][tc]!==0) continue;
-        if (Math.hypot(p.x-tx,p.y-ty) > e.weaponRange) continue;
-        if (!lineOfWall(tx,ty,p.x,p.y)) {
-          const score = -Math.hypot(tx-e.spawnX, ty-e.spawnY);
-          if (score > bestScore) { bestScore=score; bestTile={x:tx,y:ty}; }
-        }
-      }
-      if (bestTile) { e.vantageX=bestTile.x; e.vantageY=bestTile.y; }
-    }
-    if (e.vantageX !== null) {
-      if (Math.hypot(e.vantageX-e.x, e.vantageY-e.y) > 6) navigateTo(e,e.vantageX,e.vantageY,e.speed,dt);
-      else e.vantageX = null;
-    }
-  } else {
-    // Out of range — return to spawn
-    e.chargeTimer=0; e.blocked=false; e.vantageX=null;
-    if (Math.hypot(e.spawnX-e.x, e.spawnY-e.y) > 8) navigateTo(e,e.spawnX,e.spawnY,e.speed,dt);
-  }
-}
 
 function behaviorTank(e, p, dist, toPlayer, dt) {
   if (dist > e.weaponRange) navigateTo(e, p.x, p.y, e.speed, dt);
@@ -1135,7 +1080,7 @@ function updateEnemies(dt) {
     const canSee  = dist < e.visionRange && angDiff < e.visionAngle && !lineOfWall(e.x,e.y,p.x,p.y);
 
     // Patrol → Chase transition with staggered alert propagation
-    if (canSee && e.archetype !== 'sniper') {
+    if (canSee) {
       if (e.state !== 'chase') {
         const alertRadius = TILE*8;
         for (const other of nearbyEnemies(e.x,e.y,alertRadius)) {
@@ -1145,7 +1090,7 @@ function updateEnemies(dt) {
         }
       }
       e.state='chase'; e.alertTimer=2.5;
-    } else if (e.archetype!=='sniper' && e.alertTimer > 0) {
+    } else if (e.alertTimer > 0) {
       e.alertTimer -= dt;
       if (e.alertTimer <= 0) { e.state='patrol'; e.path=[]; e.pathTimer=0; e.pathGoal=null; e.patrolPath=null; }
     }
@@ -1154,13 +1099,11 @@ function updateEnemies(dt) {
       e.alertDelay -= dt;
       if (e.alertDelay <= 0) {
         e.alertDelay = undefined;
-        if (e.archetype!=='sniper'&&e.state!=='chase') { e.state='chase'; e.alertTimer=3; }
+        if (e.state!=='chase') { e.state='chase'; e.alertTimer=3; }
       }
     }
 
-    if (e.archetype === 'sniper') {
-      behaviorSniper(e, p, dist, toPlayer, dt);
-    } else if (e.state === 'patrol') {
+    if (e.state === 'patrol') {
       // Follow A* patrol route
       const wp = e.patrol[e.patrolIdx];
       if (!e.patrolPath||e.patrolPath.length===0) {
@@ -1231,7 +1174,7 @@ function startGame() {
   game.kills       = 0;
   game.bonusScore  = 0;
   game.whiteBonus  = 0;
-  game.killsByType = { regular:0, elite:0, tank:0, sniper:0 };
+  game.killsByType = { regular:0, elite:0, tank:0 };
   game.player      = null;
   game.snapshot    = null;
   initLevel(1);
@@ -1268,14 +1211,14 @@ function initLevel(level) {
 
   game.enemies = [];
   const clampedLevel = Math.min(level, 10);
-  const [nRegulars, nElites, nTanks, nSnipers] = SQUAD_TABLE[clampedLevel];
+  const [nRegulars, nElites, nTanks] = SQUAD_TABLE[clampedLevel];
   const shuffle = arr => {
     for (let i=arr.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[arr[i],arr[j]]=[arr[j],arr[i]];}
     return arr;
   };
   const archetypeQueue = shuffle([
     ...Array(nRegulars).fill('regular'), ...Array(nElites).fill('elite'),
-    ...Array(nTanks).fill('tank'),       ...Array(nSnipers).fill('sniper'),
+    ...Array(nTanks).fill('tank'),
   ]);
   const shuffledZones = shuffle([...ENEMY_SPAWNS.slice(0, Math.min(ENEMY_SPAWNS.length, archetypeQueue.length))]);
   for (let i = 0; i < archetypeQueue.length; i++) {
@@ -1466,10 +1409,10 @@ function showHighScoreScreen() {
 function showDebrief() {
   const snap   = game.snapshot || game;
   const kt     = snap.killsByType;
-  const labels = { regular:'REGULAR', elite:'ELITE', tank:'TANK', sniper:'SNIPER' };
-  const colors = { regular:'#ff3020', elite:'#ff40cc', tank:'#40ff60', sniper:'#4080ff' };
+  const labels = { regular:'REGULAR', elite:'ELITE', tank:'TANK' };
+  const colors = { regular:'#ff3020', elite:'#ff40cc', tank:'#40ff60' };
 
-  const killRows = ['regular','elite','tank','sniper'].map(type => {
+  const killRows = ['regular','elite','tank'].map(type => {
     const count = kt[type]||0, score = count*ENEMY_POINTS[type];
     return `<tr>
       <td style="color:${colors[type]};letter-spacing:2px">${labels[type]}</td>
@@ -1674,27 +1617,6 @@ function drawEnemies() {
     grd.addColorStop(1,`rgba(${pal.range},0)`);
     ctx.fillStyle=grd; ctx.beginPath(); ctx.arc(0,0,e.weaponRange,0,Math.PI*2); ctx.fill();
 
-    // Sniper laser sight
-    if (arc==='sniper') {
-      const hasSight=!lineOfWall(e.x,e.y,p.x,p.y);
-      if (!e.blocked&&hasSight) {
-        const chargeRatio=Math.min(1,(e.chargeTimer||0)/e.chargeTime);
-        ctx.save();
-        ctx.globalAlpha=0.08+chargeRatio*0.55;
-        ctx.strokeStyle=chargeRatio>0.7?'#ff4040':'#4080ff'; ctx.lineWidth=0.5+chargeRatio*2;
-        if (chargeRatio>0.85) ctx.globalAlpha*=0.7+Math.sin(Date.now()*0.04)*0.3;
-        ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(p.x-e.x,p.y-e.y); ctx.stroke();
-        ctx.lineWidth=1.5; ctx.globalAlpha=chargeRatio*0.7;
-        ctx.shadowColor=ctx.strokeStyle; ctx.shadowBlur=6;
-        ctx.beginPath(); ctx.arc(0,0,e.radius+3,-Math.PI/2,-Math.PI/2+chargeRatio*Math.PI*2); ctx.stroke();
-        ctx.restore();
-      } else {
-        ctx.save(); ctx.globalAlpha=0.06; ctx.strokeStyle='#4080ff'; ctx.lineWidth=0.5; ctx.setLineDash([3,10]);
-        ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(p.x-e.x,p.y-e.y); ctx.stroke();
-        ctx.setLineDash([]); ctx.restore();
-      }
-    }
-
     // Body
     ctx.rotate(e.angle);
     ctx.shadowColor=fl>0.5?'#fff':pal.glow; ctx.shadowBlur=fl>0?14:(chasing?10:4);
@@ -1708,14 +1630,14 @@ function drawEnemies() {
 
     // Gun nub
     ctx.fillStyle=fl>0.5?'#ffcc00':pal.nub;
-    const nubLen=arc==='sniper'?TILE*0.42:arc==='tank'?TILE*0.17:TILE*0.25, nubW=TILE*0.125;
+    const nubLen=arc==='tank'?TILE*0.17:TILE*0.25, nubW=TILE*0.125;
     ctx.beginPath(); ctx.moveTo(e.radius,0); ctx.lineTo(e.radius+nubLen,-nubW); ctx.lineTo(e.radius+nubLen,nubW); ctx.fill();
 
     // Health pips
     ctx.rotate(-e.angle);
     const pipW=TILE*0.125, pipH=TILE*0.083, pipGap=TILE*0.21;
     for (let h=0;h<e.health;h++) {
-      ctx.fillStyle=arc==='tank'?'#40ff60':arc==='sniper'?'#4080ff':arc==='elite'?'#ff40cc':'#ff3030';
+      ctx.fillStyle=arc==='tank'?'#40ff60':arc==='elite'?'#ff40cc':'#ff3030';
       ctx.fillRect(-pipGap*0.5+h*pipGap,-e.radius-TILE*0.29,pipW,pipH);
     }
     ctx.restore();
